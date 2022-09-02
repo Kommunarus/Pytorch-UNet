@@ -2,9 +2,8 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-# from pycocotools.coco import COCO
-from lvis import LVIS, LVISResults, LVISEval
-
+from pycocotools.coco import COCO
+from lvis import LVIS
 from PIL import Image, ImageDraw
 import os
 
@@ -26,9 +25,12 @@ class CocoDetection(Dataset):
             target and transforms it.
     """
 
-    def __init__(self, root, annFile):
+    def __init__(self, root, annFile_coco, annFile_lvis, is_train):
+        self.is_train = is_train
         self.root = root
-        self.coco = LVIS(annFile)
+        self.lvis = LVIS(annFile_lvis)
+        self.coco = COCO(annFile_coco)
+
         self.ids = list(self.coco.imgs.keys())
         transform = transforms.Compose([
             # you can add other transformations in this list
@@ -54,51 +56,53 @@ class CocoDetection(Dataset):
             tuple: Tuple (image, target). target is the object returned by ``coco.loadAnns``.
         """
         coco = self.coco
+        lvis = self.lvis
         img_id = self.ids[index]
-        ann_ids = coco.get_ann_ids(img_ids=img_id)
-        target = coco.load_anns(ann_ids)
+        # ann_ids = coco.getAnnIds(imgIds=img_id)
+        ann_ids_lvis = lvis.get_ann_ids(img_ids=[img_id])
+        target_lvis = lvis.load_anns(ann_ids_lvis)
+        ann_ids_coco = coco.getAnnIds(imgIds=img_id)
+        target_coco = coco.loadAnns(ann_ids_coco)
 
-        targ2 = [x for x in target if x['area'] > 1000]
+        path = os.path.basename(coco.loadImgs(img_id)[0]['coco_url'])
+        # path = coco.loadImgs(img_id)[0]['file_name']
 
-        # print(len(target), len(targ2))
-
-        if len(targ2) > 0:
-            target = copy.deepcopy(targ2)
-
-        path = coco.load_imgs(img_id)[0]['file_name']
         img = Image.open(os.path.join(self.root, path)).convert('RGB')
-        if len(target) > 0:
+        S = img.width*img.height
+        targ_base = target_coco #[x for x in target_coco if S*0.1 < x['area'] < S*0.8]
+        targ_green = [x for x in target_coco if S*0.02 < x['area'] < S*0.1]
+        targ_red = [x for x in target_lvis if S*0.02 < x['area'] < S*0.1]
+
+        draw = ImageDraw.Draw(img)
+
+        if len(targ_base) + len(targ_green) > 0:
             maski = []
             non_maski = []
+            if self.is_train:
+                for i in range(len(targ_base)):
+                    maski.append(coco.annToMask(targ_base[i]))
 
-            if random.random() < 0.95:
-
-                n_rands = list(set(random.choices(range(len(target)), k=random.randint(1, len(target)))))
-                draw = ImageDraw.Draw(img)
-
-                for n_rand in n_rands:
-                    bbox = [int(x) for x in target[n_rand]['bbox']]
-                    x1 = bbox[0]
-                    y1 = bbox[1]
-                    x2 = bbox[0] + bbox[2]
-                    y2 = bbox[1] + bbox[3]
-                    max_r = 0.2 * min(x2 - x1, y2 - y1)
-                    if max_r > 15:
-                        r = random.randint(15, int(max_r))
+                for i in range(len(targ_green)):
+                    if random.random() < 0.5:
+                        # maski.append(coco.annToMask(targ_green[i]))
+                        self.draw_points(draw, targ_green, i, colore='green')
                     else:
-                        r = 15
+                        non_maski.append(coco.annToMask(targ_green[i]))
+                        self.draw_points(draw, targ_green, i, colore='red')
 
-                    self.draw_negativ_points(x1, x2, y1, y2, r, draw)
-
-                for i in range(len(target)):
-                    if i in n_rands:
-                        non_maski.append(coco.ann_to_mask(target[i]))
+                for i in range(len(targ_red)):
+                    if random.random() < 0.5:
+                        non_maski.append(lvis.ann_to_mask(targ_red[i]))
+                        self.draw_points(draw, targ_red, i, colore='red')
                     else:
-                        maski.append(coco.ann_to_mask(target[i]))
+                        maski.append(lvis.ann_to_mask(targ_red[i]))
+                        self.draw_points(draw, targ_red, i, colore='green')
+
+
             else:
-                for i in range(len(target)):
-                    maski.append(coco.ann_to_mask(target[i]))
-
+                for i in range(len(targ_base)):
+                    maski.append(coco.annToMask(targ_base[i]))
+                    self.draw_points(draw, targ_base, i, colore='green')
 
             if len(maski) == 0:
                 # img = random.randint(0, 255) * np.ones((256, 256, 3), dtype=np.uint8)
@@ -133,28 +137,23 @@ class CocoDetection(Dataset):
 
         return {'image': transformed_image, 'mask': transformed_mask}
 
-    def draw_negativ_points(self, x1, x2, y1, y2, r, draw):
+    def draw_points(self, draw, target, n_obj, colore='red'):
+        bbox = [int(x) for x in target[n_obj]['bbox']]
+        x1 = bbox[0]
+        y1 = bbox[1]
+        x2 = bbox[0] + bbox[2]
+        y2 = bbox[1] + bbox[3]
+        max_r = 0.2 * min(x2 - x1, y2 - y1)
+        if max_r > 15:
+            r = random.randint(15, int(max_r))
+        else:
+            r = 15
 
-        a1 = int((x1 + x2) / 2 - r)
-        a2 = int((x1 + x2) / 2)
-        b1 = int((y1 + y2) / 2 - r)
-        b2 = int((y1 + y2) / 2)
-        draw.ellipse((a1, b1, a2, b2), fill='red', outline='red')
-        a1 = int((x1 + x2) / 2)
-        a2 = int((x1 + x2) / 2 + r)
-        b1 = int((y1 + y2) / 2)
-        b2 = int((y1 + y2) / 2 + r)
-        draw.ellipse((a1, b1, a2, b2), fill='green', outline='red')
-        a1 = int((x1 + x2) / 2 - r)
-        a2 = int((x1 + x2) / 2)
-        b1 = int((y1 + y2) / 2)
-        b2 = int((y1 + y2) / 2 + r)
-        draw.ellipse((a1, b1, a2, b2), fill='blue', outline='red')
-        a1 = int((x1 + x2) / 2)
-        a2 = int((x1 + x2) / 2 + r)
-        b1 = int((y1 + y2) / 2 - r)
-        b2 = int((y1 + y2) / 2)
-        draw.ellipse((a1, b1, a2, b2), fill='yellow', outline='red')
+        a1 = int((x1 + x2) / 2 - r // 2)
+        a2 = int((x1 + x2) / 2 + r // 2)
+        b1 = int((y1 + y2) / 2 - r // 2)
+        b2 = int((y1 + y2) / 2 + r // 2)
+        draw.ellipse((a1, b1, a2, b2), fill=colore, outline=colore)
 
 
     def __len__(self):
@@ -176,8 +175,9 @@ if __name__ == '__main__':
     #     transforms.ToTensor()
     # ])
     dataset = CocoDetection(root='/media/alex/DAtA2/Datasets/coco/train2017',
-                            annFile='/media/alex/DAtA2/Datasets/coco/annotations_trainval2017/annotations/instances_train2017.json',
-                            )
+                            annFile_coco='/media/alex/DAtA2/Datasets/coco/lvic_annot/lvis_v1_train.json',
+                            annFile_lvis='/media/alex/DAtA2/Datasets/coco/annotations_trainval2017/annotations/instances_train2017.json',
+                            is_train=True)
     train_loader = DataLoader(dataset, shuffle=True)
 
     i = 0

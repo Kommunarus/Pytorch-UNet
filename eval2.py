@@ -10,6 +10,23 @@ from torchvision import transforms
 
 from utils.data_loading import BasicDataset
 from unet import UNet
+import random
+
+
+def draw_points(draw, xy, w, h, r, colore='red'):
+    arr = xy.split(',')
+    if len(arr) % 2 == 0:
+        arr = [float(x.strip()) for x in arr]
+        arr2 = [(int(w*arr[i]), int(h*arr[i+1])) for i in range(0, len(arr), 2)]
+        # print(arr2)
+        for x, y in arr2:
+            a1 = int(x - r // 2)
+            a2 = int(x + r // 2)
+            b1 = int(y - r // 2)
+            b2 = int(y + r // 2)
+            draw.ellipse((a1, b1, a2, b2), fill=colore, outline=colore)
+
+
 
 def predict_img(net,
                 full_img,
@@ -45,11 +62,12 @@ def predict_img(net,
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
-    parser.add_argument('--model', '-m', default='checkpoints/checkpoint_epoch200.pth', metavar='FILE',
+    parser.add_argument('--model', '-m', default='checkpoints/checkpoint_epoch100.pth', metavar='FILE',
                         help='Specify the file in which the model is stored')
     parser.add_argument('--input', '-i', help='Filename of input image', default='video/3.jpg')
     parser.add_argument('--output', '-o', help='Filename of output image', default='1')
-    parser.add_argument('--x-y', '-x', help='x y', default='0.85, 0.5')
+    parser.add_argument('--xy_paste', '-x', help='xy_pastey', default='0.85, 0.5')
+    parser.add_argument('--xy_cute', '-x', help='xy_cute', default='0.85, 0.5')
     parser.add_argument('--viz', '-v', action='store_true',
                         help='Visualize the images as they are processed')
     parser.add_argument('--no-save', '-n', action='store_true', help='Do not save the output masks')
@@ -71,47 +89,15 @@ def mask_to_image(mask: np.ndarray):
         return Image.fromarray((np.argmax(mask, axis=0) * 255 / mask.shape[0]).astype(np.uint8))
 
 
-def add_draw(img, x_y):
-    arr = x_y.split(',')
-    w = img.size[0]
-    h = img.size[1]
-    if len(arr) % 2 == 0:
-        arr = [float(x.strip()) for x in arr]
-        arr2 = [(int(w*arr[i]), int(h*arr[i+1])) for i in range(0, len(arr), 2)]
-        draw = ImageDraw.Draw(img)
-        r = 20
-        for x, y in arr2:
-            a1 = x - r
-            a2 = x
-            b1 = y - r
-            b2 = y
-            draw.ellipse((a1, b1, a2, b2), fill='red', outline='red')
-            a1 = x
-            a2 = x + r
-            b1 = y
-            b2 = y + r
-            draw.ellipse((a1, b1, a2, b2), fill='green', outline='red')
-            a1 = x - r
-            a2 = x
-            b1 = y
-            b2 = y + r
-            draw.ellipse((a1, b1, a2, b2), fill='blue', outline='red')
-            a1 = x
-            a2 = x + r
-            b1 = y - r
-            b2 = y
-            draw.ellipse((a1, b1, a2, b2), fill='yellow', outline='red')
-    return img
 
-
-def run_net(inp, id_file, x_y):
+def run_net(inp, id_file, xy_cute, xy_paste, r):
     net = UNet(n_channels=3, n_classes=2, bilinear=False)
 
     device = torch.device('cpu')
     # device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     net.to(device=device)
-    net.load_state_dict(torch.load('checkpoints/checkpoint_epoch200.pth', map_location=device))
+    net.load_state_dict(torch.load('checkpoints/checkpoint_epoch100.pth', map_location=device))
 
     out_name = 'out/' + id_file + '.jpg'
     out_txt = 'out/' + id_file + '.txt'
@@ -119,7 +105,15 @@ def run_net(inp, id_file, x_y):
     frame = cv2.imread(inp)
     img_raw = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = Image.fromarray(img_raw)
-    img = add_draw(img, x_y)
+    w = img.size[0]
+    h = img.size[1]
+
+    draw = ImageDraw.Draw(img)
+    r = int(r)
+
+
+    draw_points(draw, xy_cute, w, h, r, colore='red')
+    draw_points(draw, xy_paste, w, h, r, colore='green')
     # img_raw = add_draw(img_raw, x_y)
 
     mask = predict_img(net=net,
@@ -131,15 +125,19 @@ def run_net(inp, id_file, x_y):
 
     ndx = np.where(mask[1] == 1)
 
-    arr = x_y.split(',')
-    w = img.size[0]
-    h = img.size[1]
+    arr = xy_cute.split(',')
     if len(arr) % 2 == 0:
         arr = [float(x.strip()) for x in arr]
         arr2 = [(int(w*arr[i]), int(h*arr[i+1])) for i in range(0, len(arr), 2)]
         for x, y in arr2:
-            cv2.circle(img_raw, (x, y), 10, (255,0,0), 3, 1)
+            cv2.circle(img_raw, (x, y), r, (255, 0, 0), 3, 1)
 
+    arr = xy_paste.split(',')
+    if len(arr) % 2 == 0:
+        arr = [float(x.strip()) for x in arr]
+        arr2 = [(int(w*arr[i]), int(h*arr[i+1])) for i in range(0, len(arr), 2)]
+        for x, y in arr2:
+            cv2.circle(img_raw, (x, y), r, (0, 255, 0), 3, 1)
 
 
     img_raw[ndx[0], ndx[1],:] = (0.3*img_raw[ndx[0], ndx[1],:] + 0.7*np.array([96, 96, 196])).astype(np.uint8)
@@ -155,7 +153,7 @@ def run_net(inp, id_file, x_y):
             cnt = cnt.astype(np.float)
             cnt[:, 0, 0] = cnt[:, 0, 0] / img_raw.shape[1]
             cnt[:, 0, 1] = cnt[:, 0, 1] / img_raw.shape[0]
-            a = np.array2string(cnt.flatten(), separator=';').replace('\n', '')
+            a = np.array2string(np.resize(cnt.flatten(), (-1, 2)), separator=',', threshold=np.inf).replace('\n', '')
             f.write(a+'\n')
 
     return contours
@@ -166,6 +164,8 @@ if __name__ == '__main__':
     args = get_args()
     in_files = args.input
     out_files = args.output
-    x_y = args.x_y
-    run_net(in_files, out_files, x_y)
+    # x_y = args.x_y
+    xy_cute = args.xy_cute
+    xy_paste = args.xy_paste
+    run_net(in_files, out_files, xy_cute, xy_paste)
     # print(time.time() - ts)

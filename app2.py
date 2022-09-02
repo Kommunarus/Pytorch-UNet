@@ -14,15 +14,15 @@ app = Flask(__name__)
 api = Api(app)
 
 
-def run_model(path_to_img, id_file, x_y):
-    out = run_net(path_to_img, id_file, x_y)
+def run_model(path_to_img, id_file, xy_cute, xy_paste, r):
+    out = run_net(path_to_img, id_file, xy_cute, xy_paste, r)
     # print(out)
 
 
-def make_lab(path_to_img, x_y):
+def make_lab(path_to_img, xy_cute, xy_paste, r):
 
     id_file = str(uuid.uuid4())
-    p = multiprocessing.Process(target=run_model, args=(path_to_img, id_file, x_y))
+    p = multiprocessing.Process(target=run_model, args=(path_to_img, id_file, xy_cute, xy_paste, r))
     p.start()
 
     return {'id': id_file,
@@ -50,31 +50,37 @@ def getinput(link, UPLOAD_FOLDER):
 class Predict(Resource):
     def get(self):
         data = reqparse.request.args['url']
-        xy = reqparse.request.args['xy']
+        xy_cute = reqparse.request.args['xy_cute']
+        xy_paste = reqparse.request.args['xy_paste']
+        r = reqparse.request.args['r']
         path_to_img, id_file = getinput(data, 'local/')
-        return make_lab(path_to_img, xy)
+        return make_lab(path_to_img, xy_cute, xy_paste, r)
 
     def post(self):
         file = request.data
         rv_string = base64.b64decode(file)
 
-        xy = reqparse.request.args['xy']
+        xy_cute = reqparse.request.args['xy_cute']
+        xy_paste = reqparse.request.args['xy_paste']
+        r = reqparse.request.args['r']
 
         # path_to_img = '{}.jpg'.format(uuid.uuid4())
         path_to_img = 'local/{}.jpg'.format(uuid.uuid4())
         with open(path_to_img, 'wb') as f:
             f.write(rv_string)
-        return make_lab(path_to_img, xy)
+        return make_lab(path_to_img, xy_cute, xy_paste, r)
 
     def put(self):
         file = request.data
-        xy = reqparse.request.args['xy']
+        xy_cute = reqparse.request.args['xy_cute']
+        xy_paste = reqparse.request.args['xy_paste']
+        r = reqparse.request.args['r']
 
         # path_to_img = '{}.jpg'.format(uuid.uuid4())
         path_to_img = 'local/{}.jpg'.format(uuid.uuid4())
         with open(path_to_img, 'wb') as f:
             f.write(file)
-        return make_lab(path_to_img, xy)
+        return make_lab(path_to_img, xy_cute, xy_paste, r)
 
 
 class GetInfo(Resource):
